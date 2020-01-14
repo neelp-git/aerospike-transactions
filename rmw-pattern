@@ -1,0 +1,35 @@
+# R-M-W pattern pseudo-code for a read-write transaction
+Result RMWTransaction(key, read_bins, update_func):
+   # key:       key tuple (namespace, set, id)
+   # read_bins: list of bins to read
+   # update_func: update function that takes a map read_bins->
+   #             values and returns a map write_bins->values
+   # Result:    return enum that includes Success and Retry
+
+   # 1. Read the record
+   read_policy = [{'read_mode_sc': SC_LINEARIZE}]
+   record = Aerospike.get(read_policy, key, read_bins)
+   read_generation = record.generation
+
+   # 2. Modify the record
+   read_bin_vals = {}
+   for read_bin in read_bins:
+       read_bin_vals[read_bin] = record[read_bin]
+   write_bin_vals = update_func(read_bin_vals)
+
+   # 3. Prepare write with generation comparison and no retries.
+   write_policy = { 'generation_policy': GEN_EQUAL,
+                   'generation': read_generation,
+                   'max_retries': 0 }
+
+   # 4. Write the modified data
+   ops = []
+   for write_bin, write_val in write_bin_vals:
+       ops.append({'op': WRITE, 'bin': write_bin, 'val': write_val})
+   try:
+       Aerospike.operate(write_policy, key, ops)
+   catch GENERATION_ERROR:
+       # retry on generation error
+       return Retry
+
+   return Success
